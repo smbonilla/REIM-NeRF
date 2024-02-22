@@ -1,6 +1,7 @@
 import os
 import cv2
-
+import warnings
+warnings.filterwarnings("ignore")
 from collections import defaultdict
 from tqdm import tqdm
 import imageio
@@ -16,6 +17,8 @@ from reimnerf.datasets.pfm_io import *
 from collections import defaultdict
 from reimnerf import metrics
 torch.backends.cudnn.benchmark = True
+
+import lpips
 
 
 def get_opts():
@@ -138,7 +141,10 @@ if __name__ == "__main__":
         nerf_fine.cuda().eval()
         models['fine'] = nerf_fine
 
-    imgs, depth_maps, psnrs = [], [], []
+    # Initialize the LPIPS model
+    lpips_model = lpips.LPIPS(net='vgg').cuda().eval()
+
+    imgs, depth_maps, psnrs, lpi_values = [], [], [], []
     dir_name = f'results/{args.dataset_name}/{args.scene_name}'
     os.makedirs(dir_name, exist_ok=True)
 
@@ -169,6 +175,14 @@ if __name__ == "__main__":
             rgbs = sample['rgbs']
             img_gt = rgbs.view(h, w, 3)
             psnrs += [metrics.psnr(torch.FloatTensor(img_pred), img_gt).item()]
+            img_pred_tensor = torch.FloatTensor(img_pred).permute(2, 0, 1).unsqueeze(0).cuda() # Adds a batch dimension and moves to GPU
+            img_gt_tensor = torch.FloatTensor(img_gt).permute(2, 0, 1).unsqueeze(0).cuda() # Same for the ground truth
+            lpips_val = metrics.calc_lpips(img_pred_tensor, 
+                                           img_gt_tensor, 
+                                           lpips_model)
+            lpi_values.append(lpips_val.item())
+        else:
+            print('No rgbs in the dataset, skipping PSNR and LPIPS calculation')
 
     imageio.mimsave(os.path.join(dir_name, f'rgb.gif'), imgs, fps=args.fps)
 
@@ -182,3 +196,7 @@ if __name__ == "__main__":
     if psnrs:
         mean_psnr = np.mean(psnrs)
         print(f'Mean PSNR : {mean_psnr:.2f}')
+    
+    if lpi_values:
+        mean_lpi = np.mean(lpi_values)
+        print(f'Mean LPIPS : {mean_lpi:.4f}')

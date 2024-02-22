@@ -50,6 +50,7 @@ class REIMNeRFDataset(Dataset):
             self.meta = json.load(f)
         frames = self.meta['frames']
 
+        self.image_paths=[]
         self.near_bounds=[]
         self.far_bounds=[]
         self.poses = []
@@ -208,7 +209,14 @@ class REIMNeRFDataset(Dataset):
             self.near_bounds.append(frame_data['near']*0.9)
             self.far_bounds.append(frame_data['far']*1.3)
 
+            # image
+            self.image_paths.append(self.root_dir/frame_data['file_path'])
+            img = Image.open(self.image_paths[-1]).convert('RGB')
+            img = img.resize(self.img_wh, Image.LANCZOS)
+            img = self.transform(img) # (3, h, w)
+            img = img.view(3, -1).permute(1, 0) # (h*w, 3)
 
+            self.all_rgbs += [img]
 
             self.all_rays += [torch.cat([rays_o, rays_d, 
                               torch.tensor(self.near_bounds[-1]).repeat(rays_o.size(0)).reshape(-1,1),
@@ -219,12 +227,16 @@ class REIMNeRFDataset(Dataset):
 
 
         self.all_rays = torch.cat(self.all_rays, 0) # ((N_images-1)*h*w, 8)
+        self.all_rgbs = torch.cat(self.all_rgbs, 0) # ((N_images-1)*h*w, 3)
 
         # TODO: refactor below
         if self.split == 'val' or self.split=='test':
             samples = len(self.poses)
             # we need to reshape the samples such that they can be pulled 1 per image
             self.all_rays = self.all_rays.reshape(samples,
+                                                  self.img_wh[0]* self.img_wh[1],
+                                                  -1)
+            self.all_rgbs = self.all_rgbs.reshape(samples,
                                                   self.img_wh[0]* self.img_wh[1],
                                                   -1)
 
@@ -280,9 +292,9 @@ class REIMNeRFDataset(Dataset):
         calib['cy']*= scale_h
 
     def __getitem__(self, idx):
-        # sample = {'rays': self.all_rays[idx],
-        #             'rgbs': self.all_rgbs[idx]}
-        sample = {'rays': self.all_rays[idx]}
+        sample = {'rays': self.all_rays[idx],
+                     'rgbs': self.all_rgbs[idx]}
+        # sample = {'rays': self.all_rays[idx]}
         # if self.distmap_paths:
         #     sample['depths']=self.all_depths[idx]
         return sample
