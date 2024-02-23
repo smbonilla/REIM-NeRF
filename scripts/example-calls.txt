@@ -1,0 +1,7 @@
+python -m scripts.pre-process_c3vd\
+        {path_to_c3vd_registered_videos_raw dir}\
+        {path_to_a_directory_to_store_the_data}
+
+python -m scripts.pre-process_GP\
+        "/workspaces/REIM-NeRF/data/GP-not-processed"\
+        "/workspaces/REIM-NeRF/data/GP-processed"

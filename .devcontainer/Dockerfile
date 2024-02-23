@@ -1,4 +1,5 @@
-FROM nvcr.io/nvidia/pytorch:22.08-py3
+# FROM nvcr.io/nvidia/pytorch:22.08-py3
+FROM nvcr.io/nvidia/pytorch:21.12-py3
 
 
 RUN apt-get update && apt-get install --no-install-recommends -y \

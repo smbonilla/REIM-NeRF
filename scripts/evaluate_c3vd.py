@@ -10,6 +10,7 @@ from reimnerf.datasets.ray_utils import get_ray_directions_ocv
 import json
 import argparse
 
+import lpips
 
 
 def rescale_calib( calib, h_new, w_new):

@@ -33,7 +33,7 @@ do
     --N_importance 64 --img_wh ${width} ${height} \
     --num_epochs ${epochs} --batch_size 1024 \
     --optimizer adam --lr 5e-4 \
-    --num_gpus 4 \
+    --num_gpus 2 \
     --lr_scheduler steplr --decay_step ${step1} ${step2} --decay_gamma 0.5 \
     --init_type ${init} \
     --variant ${model_type} \

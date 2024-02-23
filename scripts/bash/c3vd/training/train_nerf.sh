@@ -1,15 +1,15 @@
 #!/bin/bash
-export CUDA_VISIBLE_DEVICES="0,1,2,3"
+export CUDA_VISIBLE_DEVICES="0,1"
 export LD_LIBRARY_PATH=/opt/conda/lib:$LD_LIBRARY_PATH 
 
 
 echo "Training vanilla nerf"
 
 
-dataset_root_dir=/path_to_c3vd_dataset/
-width=270
-height=216
-total_samples=15000
+dataset_root_dir=/workspaces/REIM-NeRF/data/GP-processed/
+width=320
+height=240
+total_samples=330 
 rgb_loss=L2
 depth_loss=L1
 init=glorot
@@ -34,7 +34,7 @@ do
     --N_importance 64 --img_wh ${width} ${height} \
     --num_epochs ${epochs} --batch_size 1024 \
     --optimizer adam --lr 5e-4 \
-    --num_gpus 4 \
+    --num_gpus 2 \
     --lr_scheduler steplr --decay_step ${step1} ${step2} --decay_gamma 0.5 \
     --init_type ${init} \
     --variant ${model_type} \

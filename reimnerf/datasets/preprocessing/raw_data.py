@@ -6,6 +6,10 @@ import open3d as o3d
 import json
 import shutil
 from tqdm import tqdm 
+import os
+from reimnerf.datasets.preprocessing.rnnslam_utils import read_rnnslam_extrinsics
+from tqdm import tqdm   
+import reimnerf.datasets.preprocessing.colmap_read_model as cm 
 
 # Calibration files were generated using opencv and the provided calibration images from the C3VD dataset
 
@@ -490,3 +494,245 @@ def keep_only_json_fames(p, keep_step=10, start_from=0):
     meta['frames'] = meta['frames'][start_from::keep_step]
     with open(p, 'w') as f:
         json.dump(meta, f, indent=4)
+
+
+class GP_Dataset(ReimNeRFDataset):# probably it would be better if i write a generic colmap parser and then inherit
+    def __init__(self, GP_dir, filter_pointcloud=True, undistort=False):
+        self.data_dir = Path(GP_dir) 
+        self.img_dir = Path(GP_dir)/'images'
+        self.depth_dir = Path(GP_dir)/'depths'
+        self.undistort = undistort
+        self.filter =filter_pointcloud
+
+        # poses are in data_dir something *_poses.txt
+        self.poses_path = [f for f in os.listdir(self.data_dir) if f.endswith("_poses.txt")][0]
+        self.poses_path = os.path.join(self.data_dir, self.poses_path)
+
+
+        self.far_bounds_scaling = 1.1
+        self.near_bounds_scaling = 0.9
+
+        # data provided with the dataset
+        self.image_paths=[]
+        self.depth_paths=[]
+        self.poses=[]
+        self.calib=dict()
+
+
+        # data we compute
+        self.depthmaps=[]
+        self.distmaps=[]
+        self.frame_pointclouds=[]
+        self.near_bounds=[]
+        self.far_bounds=[]
+        self.pointcloud=None
+        self.scale_factor=1.0
+        self.center_geom_T=np.eye(4)
+        
+        if self.undistort:
+            self.img_tmp_dir = Path('./tmp_endomapper_dir')
+            self.img_tmp_dir.mkdir(exist_ok=True, parents=True)
+        
+        self.metainfo={'dist_ftype':'png',
+                       'distmap':'sparse',
+                       'rgb_mask':'rgb_mask.png'}
+        
+        self.cameras_p =  self.data_dir/'cameras.txt'
+        self.cm_camera_load_f = cm.read_cameras_text
+        
+        self.load_dataset()
+        
+
+    def load_dataset(self):        
+        # make a list of all the keys in images to be used from the loading functions
+        # in order to load data in the correct order
+        self.load_data() # depthmaps have np.nan values in place of zero depth pixels
+        self._compute_bounds() # np.nan values are ignored
+        self._combine_pointclouds()
+
+    def _read_calib(self):
+        if self.cameras_p.suffix=='.bin':
+            camera_info = cm.read_cameras_binary(self.cameras_p)
+        elif self.cameras_p.suffix=='.txt':
+            camera_info = cm.read_cameras_text(self.cameras_p)
+        else:
+            raise FileNotFoundError(f"could not find {self.cameras_p}")
+        # intrinsics = np.loadtxt(self.image_dir/'cam.txt')
+
+        # make sure than only a single camera model is available
+        if len(camera_info.keys())!=1:
+            raise ValueError
+        camera_info = camera_info[1]
+        #https://github.com/NVlabs/instant-ngp/blob/master/scripts/colmap2nerf.py
+
+        self.calib ={'fx':0,
+                'fy':0,
+                'cx':0,
+                'cy':0,
+                'k1':0,
+                'k2':0,
+                'k3':0,
+                'k4':0,
+                'p1':0,
+                'p2':0,
+                'w':camera_info.width,
+                'h':camera_info.height,
+                'model':camera_info.model}
+
+        if camera_info.model == 'SIMPLE_PINHOLE':
+            self.calib['fx'] = camera_info.params[0]
+            self.calib['fy'] = camera_info.params[0]
+            self.calib['cx'] = camera_info.params[1]
+            self.calib['cy'] = camera_info.params[2]
+        elif camera_info.model == 'PINHOLE':
+            self.calib['fx'] = camera_info.params[0]
+            self.calib['fy'] = camera_info.params[1]
+            self.calib['cx'] = camera_info.params[2]
+            self.calib['cy'] = camera_info.params[3]
+        elif camera_info.model == 'SIMPLE_RADIAL':
+            self.calib['fx'] = camera_info.params[0]
+            self.calib['fy'] = camera_info.params[0]
+            self.calib['cx'] = camera_info.params[1]
+            self.calib['cy'] = camera_info.params[2]
+            self.calib['k1'] = camera_info.params[3]
+        elif camera_info.model == 'RADIAL':
+            self.calib['fx'] = camera_info.params[0]
+            self.calib['fy'] = camera_info.params[0]
+            self.calib['cx'] = camera_info.params[1]
+            self.calib['cy'] = camera_info.params[2]
+            self.calib['k1'] = camera_info.params[3]
+            self.calib['k2'] = camera_info.params[4]
+
+        elif camera_info.model == 'OPENCV':
+            self.calib['fx'] = camera_info.params[0]
+            self.calib['fy'] = camera_info.params[1]
+            self.calib['cx'] = camera_info.params[2]
+            self.calib['cy'] = camera_info.params[3]
+            self.calib['k1'] = camera_info.params[4]
+            self.calib['k2'] = camera_info.params[5]
+            self.calib['p1'] = camera_info.params[6]
+            self.calib['p2'] = camera_info.params[7]
+        elif camera_info.model == "SIMPLE_RADIAL_FISHEYE":
+            self.calib['fx'] = camera_info.params[0]
+            self.calib['fy'] = camera_info.params[0]
+            self.calib['cx'] = camera_info.params[1]
+            self.calib['cy'] = camera_info.params[2]
+            self.calib['k1'] = camera_info.params[3]
+        elif camera_info.model == "RADIAL_FISHEYE":
+            self.calib['fx'] = camera_info.params[0]
+            self.calib['fy'] = camera_info.params[0]
+            self.calib['cx'] = camera_info.params[1]
+            self.calib['cy'] = camera_info.params[2]
+            self.calib['k1'] = camera_info.params[3]
+            self.calib['k2'] = camera_info.params[4]
+        elif camera_info.model == "OPENCV_FISHEYE":
+            self.calib['fx'] = camera_info.params[0]
+            self.calib['fy'] = camera_info.params[1]
+            self.calib['cx'] = camera_info.params[2]
+            self.calib['cy'] = camera_info.params[3]
+            self.calib['k1'] = camera_info.params[4]
+            self.calib['k2'] = camera_info.params[5]
+            self.calib['k3'] = camera_info.params[6]
+            self.calib['k4'] = camera_info.params[7]
+        else:
+            raise NotImplementedError(f"Please parse the intrinsics for camera model {camera_info.model}!")
+  
+
+    def _construct_rgb_masks(self):
+        """construct mask to ignore rgb values during optimization and evalutation"""
+        img = cv2.imread(str(self.image_paths[0]))
+        self.rgb_mask = np.all(img<=5, axis=-1).astype(np.uint8)*255
+        if 'FISHEYE' in self.calib['model']:
+            # erode the mask to avoid having pixels in the periphery of the image
+            erode_kernel_size = int(self.calib['h']*0.05)
+            self.rgb_mask = cv2.erode(self.rgb_mask,
+                                      np.ones((erode_kernel_size,erode_kernel_size)),
+                                      borderType=cv2.BORDER_CONSTANT,
+                                      borderValue=0)
+
+    def convert_pose_to_colmap(self):
+        image_files = [f for f in os.listdir(self.img_dir) if f.endswith('.png') or f.endswith('.jpg')]
+        depth_files = [f for f in os.listdir(self.depth_dir) if f.endswith('.png') or f.endswith('.jpg')]
+        if image_files[0].split(".")[0].isdigit(): # "1.png"
+            image_files.sort(key=lambda f: int(f.split(".")[0]))
+            depth_files.sort(key=lambda f: int(f.split(".")[0]))
+        else: # "1_color.png"
+            image_files.sort(key=lambda f: int(f.split("_")[0]))
+            depth_files.sort(key=lambda f: int(f.split("_")[0]))
+        images = read_rnnslam_extrinsics(self.poses_path, image_files, depth_files)
+
+        return images
+
+
+    def colmap_pose_to_T(self, img_data):
+        transform = np.eye(4)
+        transform[:3,:3] = img_data.qvec2rotmat()
+        transform[:3,-1] = img_data.tvec.reshape(-1)
+        return transform # this should be opencv w2c format
+
+
+    def load_data(self):
+        # read information regarding camera calibration
+        self.colmap_cameras = self.cm_camera_load_f(self.cameras_p)
+        # read information regarding the poses, 3d points indexing and projeciton coordinates
+        self.colmap_images = self.convert_pose_to_colmap()
+    
+        
+        # read calibration from the colmap_cameras and populate the self.calib attribute
+        self._read_calib()
+
+        for idx, val in self.colmap_images.items():
+
+            self.image_paths.append(self.img_dir/val.name)
+            self.depth_paths.append(self.depth_dir/val.depth_name)
+
+            # load the pose of the frame
+            w2c = self.colmap_pose_to_T(val).astype(np.float32)
+            c2w = np.linalg.inv(w2c)
+            # convert it to opengl format and store it
+            self.poses.append(c2w@np.diag((1,-1,-1,1)))
+        
+        self._construct_rgb_masks()
+
+        ray_dirs = self._get_ray_directions(coordinates='opencv', pix_offset=0.5) # (hw x 3)
+
+        for i in tqdm(range(len(self.image_paths))):
+
+            depthmap = self._read_depthmap(self.depth_paths[i])# (h xw)
+
+            depthmap[self.rgb_mask[...,0]!=0]=np.nan
+            
+            # unproject depthmap to pointcloud
+            frame_ptcloud = depthmap.reshape(-1,1)*ray_dirs #(hw x 3)
+            
+            distmap = np.linalg.norm(frame_ptcloud, axis=-1).reshape(self.calib['h'], self.calib['w'])
+            
+            frame_ptcloud = frame_ptcloud[~np.any(np.isnan(frame_ptcloud), axis=1)]# remove nan points
+            frame_ptcloud = frame_ptcloud@ np.diag((1,-1,-1))# convert to opengl
+
+            self.frame_pointclouds.append(frame_ptcloud[::1000])# reduce the resolution to manage
+            # pointcloud size. 
+            self.depthmaps.append(depthmap)
+            self.distmaps.append(distmap)
+
+    def _compute_bounds(self):
+        for dist in self.distmaps:
+            # we need to bounds based on cartesian distance and not z distance
+            # which depthmaps typically encode. this is because the bounds will
+            # be used to configure nerf's render distance
+            self.far_bounds.append(np.nanmax(dist)*self.far_bounds_scaling)
+            self.near_bounds.append(np.nanmin(dist)*self.near_bounds_scaling)
+    
+    def _read_depthmap(self, file_path):
+        # the GP dataset follows the format described below
+        # depthmaps are stored as int32 values between
+        # -2**32-1 and 2**32-1. The values are mapped to 0-100mm
+        # they only occupy a small range of the int32 values not the full range
+
+        # file_path is PosixPath object and need just the string
+        file_path = str(file_path)
+        depth = cv2.imread(file_path, cv2.IMREAD_UNCHANGED).astype(np.float32)
+        depth = ((depth - np.min(depth)) / (np.max(depth) - np.min(depth)))*100
+        depth[depth==0]=np.nan
+        assert depth.shape==(self.calib['h'], self.calib['w'])
+        return depth

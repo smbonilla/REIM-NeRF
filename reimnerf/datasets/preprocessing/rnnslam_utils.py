@@ -18,7 +18,7 @@ import sys
 import math
 import collections
 
-from colmap_read_model import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
+from reimnerf.datasets.preprocessing.colmap_read_model import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
     read_extrinsics_binary 
 
 Camera = collections.namedtuple(
