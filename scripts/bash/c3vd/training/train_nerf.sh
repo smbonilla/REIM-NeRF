@@ -9,7 +9,7 @@ echo "Training vanilla nerf"
 dataset_root_dir=/workspaces/REIM-NeRF/data/GP-processed/
 width=320
 height=240
-total_samples=330 
+total_samples=30000 
 rgb_loss=L2
 depth_loss=L1
 init=glorot

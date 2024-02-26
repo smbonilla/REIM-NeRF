@@ -728,11 +728,12 @@ class GP_Dataset(ReimNeRFDataset):# probably it would be better if i write a gen
         # depthmaps are stored as int32 values between
         # -2**32-1 and 2**32-1. The values are mapped to 0-100mm
         # they only occupy a small range of the int32 values not the full range
-
-        # file_path is PosixPath object and need just the string
         file_path = str(file_path)
         depth = cv2.imread(file_path, cv2.IMREAD_UNCHANGED).astype(np.float32)
-        depth = ((depth - np.min(depth)) / (np.max(depth) - np.min(depth)))*100
+        depth_range = np.max(depth) - np.min(depth)
+        if depth_range > 0:
+            depth = ((depth - np.min(depth)) / depth_range) * 100
+        else:
+            depth = np.zeros(depth.shape, dtype=np.float32)
         depth[depth==0]=np.nan
-        assert depth.shape==(self.calib['h'], self.calib['w'])
         return depth

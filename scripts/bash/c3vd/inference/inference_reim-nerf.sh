@@ -4,8 +4,8 @@ export LD_LIBRARY_PATH=/opt/conda/lib:$LD_LIBRARY_PATH
 
 echo "Rendering C3VD using REIM-NeRf (light-source conditioned nerf trained with sparce depth supervision)"
 
-width=270
-height=216
+width=320
+height=240
 model_type=ls_loc
 depth_ratio=0.03
 
@@ -15,9 +15,9 @@ for _ in {0..4}; do
     root_dir="$(dirname "$root_dir")"
 done
 
-checkpoints_root_dir=$root_dir/ckpts/c3vd/main_results_iter15000_w270_h216/${model_type}_depth_${depth_ratio}
+checkpoints_root_dir=$root_dir/ckpts/c3vd/main_results_iter30000_w320_h240/${model_type}_depth_${depth_ratio}
 
-sequences_root_dir=${root_dir}/data/C3VD-processed/sequences
+sequences_root_dir=${root_dir}/data/GP-processed/
 
 for dataset_path in $sequences_root_dir/*
 do
